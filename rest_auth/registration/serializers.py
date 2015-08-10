@@ -2,6 +2,9 @@ from django.http import HttpRequest
 from rest_framework import serializers
 from requests.exceptions import HTTPError
 from allauth.socialaccount.helpers import complete_social_login
+from django.core.urlresolvers import NoReverseMatch
+from django.db.utils import IntegrityError
+from django.contrib.auth import get_user_model
 
 
 class SocialLoginSerializer(serializers.Serializer):
@@ -38,10 +41,28 @@ class SocialLoginSerializer(serializers.Serializer):
             complete_social_login(request, login)
         except HTTPError:
             raise serializers.ValidationError('Incorrect value')
-
+        except NoReverseMatch:
+            """
+            Here we catch because all_auth wants to send us to a signup form
+            to enter a new email address
+            """
+            pass
         if not login.is_existing:
             login.lookup()
-            login.save(request, connect=True)
+            try:
+                login.save(request, connect=True)
+            except IntegrityError:
+                """
+                here we catch the IntegrityError because there is already an
+                user with the same email address.
+                Therefore we save login.account on our own and relate it to the
+                already registered user
+                """
+                user = get_user_model().objects.get(
+                    email=login.account.extra_data['email']
+                )
+                login.account.user = user
+                login.account.save()
         attrs['user'] = login.account.user
 
         return attrs
